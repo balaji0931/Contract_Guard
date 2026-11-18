@@ -32,6 +32,12 @@ export const FINDING_CODES = {
   WARN_SUNSET_OVERDUE: "warning",
   /** Breaking diff with no known consumer impact (publishes under L-1). */
   WARN_UNCONSUMED_BREAKING: "warning",
+  /**
+   * New enum option added to a returned field — PLAN.md §6 rates this a
+   * warning (exhaustive-switch risk). Added under L-6's rule that new codes
+   * may follow the same `ERR_`/`WARN_` convention.
+   */
+  WARN_ENUM_VALUE_ADDED: "warning",
   /** Change on an `x-internal` operation, excluded from the gate. */
   WARN_INTERNAL_CHANGE_NOTED: "info",
 } as const satisfies Record<string, FindingSeverity>;
