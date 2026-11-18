@@ -69,45 +69,54 @@ function ownerOf(db: Database, candidate: GateCandidate): string | null {
   return row?.owner ?? null;
 }
 
-/** Latest published version of each service, with its wire index. */
-function publishedSnapshots(
+/** Latest published version of each service, read from live DB statuses. */
+export function publishedSnapshotsFrom(
   db: Database,
-  index: KitIndexResult,
-  decided: DecidedCandidate[],
+  candidates: GateCandidate[],
 ): PublishedServiceIndex[] {
-  const publishedByService = new Map<string, DecidedCandidate>();
-  for (const entry of decided) {
-    if (entry.verdict.outcome !== "published") continue;
-    const current = publishedByService.get(entry.candidate.service);
-    if (
-      current === undefined ||
-      entry.candidate.order > current.candidate.order
-    ) {
-      publishedByService.set(entry.candidate.service, entry);
+  const statusOf = db.prepare(
+    `SELECT sv.status AS status
+     FROM spec_versions sv JOIN services s ON s.id = sv.service_id
+     WHERE s.name = ? AND sv.version = ? AND sv.source_file = ?`,
+  );
+  const publishedByService = new Map<string, GateCandidate>();
+  for (const candidate of candidates) {
+    const row = statusOf.get(
+      candidate.service,
+      candidate.version,
+      candidate.sourceFile,
+    ) as { status: string } | undefined;
+    if (row?.status !== "published") continue;
+    const current = publishedByService.get(candidate.service);
+    if (current === undefined || candidate.order > current.order) {
+      publishedByService.set(candidate.service, candidate);
     }
   }
 
   const snapshots: PublishedServiceIndex[] = [];
-  for (const [service, entry] of [...publishedByService.entries()].sort(([left], [right]) =>
+  for (const [service, candidate] of [...publishedByService.entries()].sort(([left], [right]) =>
     left.localeCompare(right),
   )) {
     const row = db
-      .prepare("SELECT owner FROM spec_versions WHERE id = ?")
-      .get(entry.verdict.specVersionId) as { owner: string | null };
+      .prepare(
+        `SELECT sv.id AS id, sv.owner AS owner FROM spec_versions sv JOIN services s ON s.id = sv.service_id
+         WHERE s.name = ? AND sv.version = ? AND sv.source_file = ?`,
+      )
+      .get(service, candidate.version, candidate.sourceFile) as { id: number; owner: string | null };
     snapshots.push({
       service,
-      specVersionId: entry.verdict.specVersionId,
-      version: entry.candidate.version,
-      sourceFile: entry.candidate.sourceFile,
+      specVersionId: row.id,
+      version: candidate.version,
+      sourceFile: candidate.sourceFile,
       owner: row.owner,
-      operations: entry.candidate.operations,
+      operations: candidate.operations,
     });
   }
   return snapshots;
 }
 
 /** Persist sunset findings on the published row they were found on. */
-function persistSunsetFindings(
+export function persistSunsetFindings(
   db: Database,
   published: PublishedServiceIndex[],
   hits: SunsetHit[],
@@ -220,7 +229,10 @@ export async function runStartupPipeline(
   }
 
   // 4. Sunset engine over what is published (L-4).
-  const published = publishedSnapshots(db, index, decided);
+  const published = publishedSnapshotsFrom(
+    db,
+    decided.map((entry) => entry.candidate),
+  );
   const sunsetHits = findOverdueSunsets({
     published,
     consumerIndex: index.consumers,

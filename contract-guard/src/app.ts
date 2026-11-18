@@ -8,6 +8,9 @@ import type { Config } from "./config.js";
 import type { Database } from "./db/database.js";
 import { migrationStatus } from "./db/database.js";
 import type { Logger } from "./logger.js";
+import { registerApi } from "./api/routes.js";
+import { renderDashboard } from "./api/dashboard.js";
+import { RegistryState } from "./api/state.js";
 
 export const APP_NAME = "contract-guard";
 export const APP_VERSION = "0.1.0";
@@ -18,9 +21,17 @@ export interface AppDependencies {
   logger: Logger;
   /** When the process started — reported by /api/health. */
   startedAt?: Date;
+  /** Shared API read model (uploads + fresh per-request views). */
+  state?: RegistryState;
 }
 
-export function createApp({ config, db, logger, startedAt = new Date() }: AppDependencies): Express {
+export function createApp({
+  config,
+  db,
+  logger,
+  startedAt = new Date(),
+  state = new RegistryState(),
+}: AppDependencies): Express {
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "4mb" }));
@@ -47,6 +58,12 @@ export function createApp({ config, db, logger, startedAt = new Date() }: AppDep
       webhookUrl: config.webhookUrl,
       db: dbHealth,
     });
+  });
+
+  // Registry API + dashboard (PLAN.md §9); the 404 fallback must stay below.
+  registerApi(app, { config, db, logger, state });
+  app.get("/", (_req: Request, res: Response) => {
+    res.type("html").send(renderDashboard(db));
   });
 
   app.use((_req, res) => {
