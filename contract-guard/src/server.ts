@@ -1,13 +1,11 @@
 /**
- * Process entry point: configuration, database, HTTP server.
- *
- * Phases 1+ plug the loader, engines, gate, notifier and startup pipeline in
- * here; Phase 0 establishes the foundation only.
+ * Process entry point: configuration, database, startup pipeline, HTTP server.
  */
 import { createApp, APP_NAME, APP_VERSION } from "./app.js";
 import { ConfigError, loadConfig } from "./config.js";
 import { openDatabase } from "./db/database.js";
 import { createLogger } from "./logger.js";
+import { runStartupPipeline } from "./pipeline/startup.js";
 
 function main(): void {
   const logger = createLogger({ level: process.env.CG_LOG_LEVEL });
@@ -37,6 +35,13 @@ function main(): void {
       dbPath: config.dbPath,
       webhookUrl: config.webhookUrl,
     });
+  });
+
+  // Startup pipeline (L-3): scan, publish in file order, alert, sunset checks.
+  // Runs after the listener is up; failures are logged, never fatal, and
+  // never change gate verdicts already persisted.
+  void runStartupPipeline({ db, config, logger }).catch((error: unknown) => {
+    logger.error("startup pipeline failed", { error: (error as Error).message });
   });
 
   const shutdown = (signal: string) => {
