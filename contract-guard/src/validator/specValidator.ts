@@ -7,26 +7,12 @@
 
 import { finding, type Finding } from "../findings/codes.js";
 import { normalizePathTemplate } from "../domain/paths.js";
-
-const HTTP_METHODS = new Set([
-  "get",
-  "put",
-  "post",
-  "delete",
-  "options",
-  "head",
-  "patch",
-  "trace",
-]);
+import { HTTP_METHOD_SET, isPlainObject, resolveLocalPointer } from "../domain/openapi.js";
 
 export interface ReferenceIssue {
   ref: string;
   /** Dot path to the offending `$ref`, e.g. `paths./claims.get.responses.200...$ref`. */
   location: string;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Collect every `$ref` string in a document with a readable location. */
@@ -55,27 +41,8 @@ export function collectReferences(document: unknown): ReferenceIssue[] {
   return found;
 }
 
-/** Resolve an RFC 6901 JSON pointer that starts at the document root. */
-export function resolveLocalPointer(document: unknown, ref: string): { ok: boolean; value?: unknown } {
-  if (!ref.startsWith("#/")) return { ok: false };
-  const segments = ref
-    .slice(2)
-    .split("/")
-    .map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"));
-
-  let current: unknown = document;
-  for (const segment of segments) {
-    if (Array.isArray(current)) {
-      const index = Number(segment);
-      if (!Number.isInteger(index) || index < 0 || index >= current.length) return { ok: false };
-      current = current[index];
-      continue;
-    }
-    if (!isPlainObject(current) || !(segment in current)) return { ok: false };
-    current = current[segment];
-  }
-  return { ok: true, value: current };
-}
+/** Pointer resolution lives in the domain layer; re-exported for validators. */
+export { resolveLocalPointer };
 
 interface OperationScan {
   method: string;
@@ -88,7 +55,7 @@ function collectOperations(paths: Record<string, unknown>): OperationScan[] {
   for (const [pathTemplate, item] of Object.entries(paths)) {
     if (!isPlainObject(item)) continue;
     for (const [key, value] of Object.entries(item)) {
-      if (!HTTP_METHODS.has(key.toLowerCase())) continue;
+      if (!HTTP_METHOD_SET.has(key.toLowerCase())) continue;
       const operation = isPlainObject(value) ? value : undefined;
       const operationId = typeof operation?.operationId === "string" ? operation.operationId : undefined;
       operations.push({ method: key.toUpperCase(), pathTemplate, operationId });

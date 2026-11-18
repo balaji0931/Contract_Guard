@@ -23,6 +23,8 @@ export interface SpecIntake {
   owner: string | null;
   valid: boolean;
   issues: Finding[];
+  /** Parsed YAML document, or `null` when the file could not be read or parsed. */
+  document: unknown;
 }
 
 function asString(value: unknown): string | null {
@@ -43,6 +45,7 @@ export function loadSpecFile(ref: SpecFileRef): SpecIntake {
     order: ref.order,
     relativePath: ref.relativePath,
     fileName: ref.fileName,
+    document: null as unknown,
   };
 
   const read = readTextReadOnly(ref.absolutePath);
@@ -94,6 +97,7 @@ export function loadSpecFile(ref: SpecFileRef): SpecIntake {
 
   return {
     ...base,
+    document,
     contentHash,
     version,
     title: asString(infoBlock?.title),
