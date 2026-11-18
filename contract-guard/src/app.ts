@@ -3,14 +3,18 @@
  * same app can be driven by supertest in tests and by server.ts in production.
  */
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import type { Config } from "./config.js";
 import type { Database } from "./db/database.js";
 import { migrationStatus } from "./db/database.js";
 import type { Logger } from "./logger.js";
 import { registerApi } from "./api/routes.js";
-import { renderDashboard } from "./api/dashboard.js";
 import { RegistryState } from "./api/state.js";
+
+/** Built React dashboard (`client/dist`), if the client has been built. */
+const CLIENT_DIST = fileURLToPath(new URL("../client/dist", import.meta.url));
 
 export const APP_NAME = "contract-guard";
 export const APP_VERSION = "0.1.0";
@@ -60,11 +64,26 @@ export function createApp({
     });
   });
 
-  // Registry API + dashboard (PLAN.md §9); the 404 fallback must stay below.
+  // Registry API + React dashboard (PLAN.md §9); the 404 fallback must stay below.
   registerApi(app, { config, db, logger, state });
-  app.get("/", (_req: Request, res: Response) => {
-    res.type("html").send(renderDashboard(db));
-  });
+  if (existsSync(CLIENT_DIST)) {
+    // Vite build output: hashed assets + index.html at GET /.
+    app.use(express.static(CLIENT_DIST, { index: false }));
+    app.get("/", (_req: Request, res: Response) => {
+      res.sendFile("index.html", { root: CLIENT_DIST });
+    });
+  } else {
+    app.get("/", (_req: Request, res: Response) => {
+      res
+        .status(503)
+        .type("html")
+        .send(
+          "<!doctype html><title>Contract Guard</title>" +
+            "<h1>Contract Guard</h1><p>Dashboard assets not built yet — run " +
+            "<code>npm install && npm run build</code> in <code>contract-guard/client</code>.</p>",
+        );
+    });
+  }
 
   app.use((_req, res) => {
     res.status(404).json({ error: "not_found" });

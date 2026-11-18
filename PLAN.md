@@ -29,7 +29,7 @@ Teams publish OpenAPI specifications for shared APIs (`quote-api`, `policy-api`,
 - Publication gate with statuses `published | blocked | rejected`, reason codes and a full audit trail.
 - Sunset/deprecation engine (startup scan + `POST /api/recheck`).
 - Webhook notifier with per-path routing, retries, and an alert log in the DB.
-- HTTP API + dashboard UI (read + publish/re-publish actions).
+- HTTP API + dashboard UI — React + Vite + Tailwind SPA (read + publish/re-publish actions).
 - SQLite persistence (`better-sqlite3`), fresh state on each startup.
 - Acceptance tests asserting the 12-file matrix end-to-end (including webhook delivery).
 
@@ -61,6 +61,7 @@ Teams publish OpenAPI specifications for shared APIs (`quote-api`, `policy-api`,
 | YAML parsing | `js-yaml` |
 | Parsing/diff | **Custom differ** — we resolve internal `$ref`s ourselves so a broken ref (`ClaimDocumnt`) becomes a reported finding, not a crash; deterministic rulebook |
 | Tests | `vitest` + `supertest` (golden-file tests over all 12 specs + end-to-end webhook assertion) |
+| Dashboard UI | **React + Vite + Tailwind CSS** SPA in `contract-guard/client/` (icons: `lucide-react`). Built to static assets in `client/dist`, served by Express at `GET /`; dev mode runs on the Vite dev server proxying `/api` to the app. *(PO instruction 2026-11-18 — replaces the earlier server-rendered HTML template; supersedes T-5's "basic HTML" note in DECISIONS.md.)* |
 | App location | `contract-guard/` at repo root; reads the kit via `KIT_ROOT` (default: repo root). Nothing writes into `specs/` or `consumers/`, ever. |
 
 **Env config:** `PORT` (app), `WEBHOOK_URL` (default `http://localhost:9900`), `CG_DB_PATH`, `CG_AS_OF_DATE` (pins "today"; acceptance runs use `2026-11-18`), `GATE_MODE` (default `consumer`), `CG_FRESH` (default `1` — replay pipeline on startup).
@@ -144,7 +145,7 @@ Payload sketch: `{ event, service, owner, from_version, to_version, action, verd
 - `GET /api/health` · `GET /api/services` · `GET /api/services/:name/versions` · `GET /api/services/:name/versions/:v` · `.../impact`
 - `POST /api/services/:name/versions/:v/publish` (re-run gate live) · `POST /api/specs` (manual upload, still validated + deduped)
 - `GET /api/consumers` · `GET /api/consumers/:name/risks` · `GET /api/findings` · `GET /api/alerts` · `GET /api/events` · `POST /api/recheck`
-- `GET /` — dashboard: per-service version timeline (published/blocked/rejected), findings table, consumer risk list, sent-alert log, re-publish buttons.
+- `GET /` — React dashboard (Vite + Tailwind SPA from `client/dist`): stats overview (services, risks, blocked specs, alert status), per-service version timeline (published/blocked/rejected), findings + impact inspector tables, live alert feed, re-publish actions.
 
 ## 10. Build sequence (each phase independently testable)
 

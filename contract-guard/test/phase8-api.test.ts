@@ -381,23 +381,19 @@ describe("POST /api/recheck runs the sunset engine and retries alerts", () => {
 });
 
 describe("dashboard", () => {
-  it("GET / renders versions, findings, risks and alerts with re-publish buttons", async () => {
+  it("GET / serves the React dashboard build, or a clear placeholder until it exists", async () => {
     const { app } = await booted();
-    const response = await request(app).get("/").expect(200);
+    const response = await request(app).get("/");
+    // React SPA built to client/dist is served verbatim; before a client build
+    // the app answers with an explicit "not built yet" notice, never a 404.
+    expect([200, 503]).toContain(response.status);
     expect(response.headers["content-type"]).toMatch(/html/);
-    const html: string = response.text;
-    // Version timeline with statuses for all three services.
-    for (const service of ["quote-api", "policy-api", "claims-api"]) {
-      expect(html).toContain(service);
+    expect(response.text).toContain("Contract Guard");
+    if (response.status === 200) {
+      // The Vite build output is a React shell that fetches the JSON API.
+      expect(response.text).toContain('id="root"');
+    } else {
+      expect(response.text).toContain("contract-guard/client");
     }
-    expect(html).toContain("published");
-    expect(html).toContain("blocked");
-    expect(html).toContain("rejected");
-    // Findings + consumer risk list + alert log + actions.
-    expect(html).toContain("ERR_BREAKING_FIELD_REMOVED");
-    expect(html).toContain("mobile-app");
-    expect(html).toContain("/alerts/block/quote-api/2.0.0");
-    expect(html).toContain("re-publish");
-    expect(html).toContain("/api/services/");
   });
 });
