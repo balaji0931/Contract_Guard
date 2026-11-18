@@ -40,7 +40,10 @@ CREATE TABLE spec_versions (
   info_version TEXT,
   decided_at   TEXT,
   created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  UNIQUE (service_id, version)
+  -- One row per intake attempt. Version reservation (L-2) is enforced by the
+  -- gate against these rows, not by a constraint here: a rejected duplicate
+  -- (for example the corrected claims-api 1.1.0 file) must still be recorded.
+  UNIQUE (service_id, version, source_file)
 );
 
 CREATE TABLE operations (

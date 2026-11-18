@@ -175,13 +175,16 @@ describe("runMigrations", () => {
     const serviceId = (db.prepare("SELECT id FROM services WHERE name = 'claims-api'").get() as { id: number }).id;
 
     const insert = db.prepare(
-      "INSERT INTO spec_versions (service_id, version, status) VALUES (?, ?, ?)",
+      "INSERT INTO spec_versions (service_id, version, status, source_file) VALUES (?, ?, ?, ?)",
     );
     for (const status of ["staged", "published", "blocked", "rejected", "invalid"]) {
-      expect(() => insert.run(serviceId, `1.0.${status}`, status)).not.toThrow();
+      expect(() => insert.run(serviceId, `1.0.${status}`, status, `1-${status}.yaml`)).not.toThrow();
     }
-    // A version number cannot be occupied twice for the same service.
-    expect(() => insert.run(serviceId, "1.0.published", "blocked")).toThrow(/UNIQUE/i);
-    expect(() => insert.run(serviceId, "9.9.9", "not_a_status")).toThrow(/CHECK/i);
+    // The same file cannot be intaken twice for one service...
+    expect(() => insert.run(serviceId, "1.0.published", "blocked", "1-published.yaml")).toThrow(/UNIQUE/i);
+    // ...but a *different* file reusing a reserved version is storable as a
+    // rejection row, which is how L-2 records the corrected claims-api 1.1.0.
+    expect(() => insert.run(serviceId, "1.0.published", "rejected", "2-fixed.yaml")).not.toThrow();
+    expect(() => insert.run(serviceId, "9.9.9", "not_a_status", "3.yaml")).toThrow(/CHECK/i);
   });
 });
