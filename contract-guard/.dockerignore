@@ -1,0 +1,11 @@
+# Everything here is rebuilt inside the image; keep the build context small.
+node_modules
+client/node_modules
+dist
+client/dist
+data
+test
+vitest.config.ts
+*.log
+.env
+.git

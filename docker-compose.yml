@@ -1,7 +1,55 @@
-# Contract Guard starter kit: a webhook receiver (the specs and consumer files are plain files in this folder).
-# Start:  docker compose up --build     (Podman: podman compose up --build)
+# Contract Guard — the whole system in one command:
+#
+#   docker compose up --build
+#
+#   Dashboard + JSON API .... http://localhost:5051
+#   Webhook receiver UI ..... http://localhost:9900   (GET /api/received, DELETE /api/received)
+#
+# On start, contract-guard replays the full pipeline (L-3): discovers specs/ and
+# consumers/, validates, indexes the wire, diffs, checks consumer impact, gates
+# all 12 files (5 published / 6 blocked / 1 rejected), fires the §8 webhook
+# alerts to the receiver, and runs the sunset engine.
+#
+# Port overrides: CG_PORT=6051 WEBHOOK_PORT=9950 docker compose up --build
 services:
   webhook-receiver:
     build: ./webhook-receiver
     environment: { PORT: "9000" }
     ports: ["${WEBHOOK_PORT:-9900}:9000"]  # host port: 9900 by default, override with WEBHOOK_PORT
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9000/api/received', timeout=2).status == 200 else 1)"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 2s
+
+  contract-guard:
+    build: ./contract-guard
+    environment:
+      PORT: "5051"
+      # Container-to-container: the receiver listens on 9000 inside the compose network.
+      WEBHOOK_URL: "http://webhook-receiver:9000"
+      CG_DB_PATH: "/app/data/contract-guard.db"
+      # Zero-config acceptance defaults (locked decisions L-1/L-3/L-4):
+      CG_AS_OF_DATE: "2026-11-18"  # pins "today": legacyCode (sunset 2026-11-01) is overdue
+      GATE_MODE: consumer          # block on known-consumer impact or past-sunset removal
+      CG_FRESH: "1"                # every startup replays the whole pipeline and re-alerts
+      KIT_ROOT: /kit               # specs/ and consumers/ are mounted here, read-only
+      CG_LOG_LEVEL: info
+    volumes:
+      - ./specs:/kit/specs:ro      # strictly read-only — enforced by the mount itself
+      - ./consumers:/kit/consumers:ro
+      - contract-guard-data:/app/data
+    ports: ["${CG_PORT:-5051}:5051"]
+    depends_on:
+      webhook-receiver:
+        condition: service_healthy  # alerts must land, not fail while the receiver boots
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5051/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+volumes:
+  contract-guard-data:

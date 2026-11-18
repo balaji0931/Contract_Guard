@@ -153,7 +153,7 @@ With `CG_AS_OF_DATE=2026-11-18`, `GATE_MODE=consumer`, an empty database, and th
 | Diffing | **Custom wire-level differ** | deterministic rulebook; component-name independence is the point |
 | Tests | **vitest + supertest** | unit + end-to-end HTTP + real webhook receipt assertions |
 | Dashboard | **React + Vite + Tailwind CSS** (+ `lucide-react`) | SPA in `contract-guard/client/` (PO instruction 2026-11-18, supersedes T-5's plain HTML) |
-| Receiver | Python stdlib server (kit file, unmodified) via **docker-compose** | stands in for chat/email/paging |
+| Receiver | Python stdlib server (kit file, unmodified) via **docker-compose** (which now runs the full stack) | stands in for chat/email/paging |
 
 ---
 
@@ -168,8 +168,9 @@ With `CG_AS_OF_DATE=2026-11-18`, `GATE_MODE=consumer`, an empty database, and th
 ├── consumers/                ← READ-ONLY consumer manifests (mobile-app, partner-portal,
 │                                payments-svc, notifications-svc)
 ├── webhook-receiver/         ← kit's stand-in for chat/email (Dockerfile + app.py, unmodified)
-├── docker-compose.yml        ← starts the receiver on host port 9900
+├── docker-compose.yml        ← one command runs everything: receiver (:9900) + contract-guard (:5051)
 ├── contract-guard/           ← ALL application code lives here
+│   ├── Dockerfile            ← multi-stage: builds dashboard + backend, ships runtime only
 │   ├── src/
 │   │   ├── loader/           discovery, read-only file IO, spec/consumer intake
 │   │   ├── validator/        structural validation, $ref resolution
@@ -200,38 +201,88 @@ With `CG_AS_OF_DATE=2026-11-18`, `GATE_MODE=consumer`, an empty database, and th
 
 ## Setup and configuration
 
-### Prerequisites
+### Recommended: Docker (zero-config, one command)
 
-- **Node.js ≥ 22** and npm (tested on Node 24)
-- **Docker** (or Podman) for the webhook receiver
-- SQLite is embedded (`better-sqlite3`) — no database server to install
-
-### 1. Start the webhook receiver (port 9900)
+**Evaluators do not need Node or Python installed.** Docker (or Podman) is the only
+prerequisite — everything else (dashboard build, backend compile, SQLite,
+migrations, the full pipeline replay, live alerts) happens inside containers:
 
 ```bash
-docker compose up --build -d          # or: podman compose up --build -d
+docker compose up --build          # add -d to run detached
 ```
 
-- Receiver UI: <http://localhost:9900> (auto-refreshing list of received alerts)
-- `GET /api/received` → everything received as JSON; `DELETE /api/received` → clear
-- Port 9900 taken? `WEBHOOK_PORT=9950 docker compose up --build -d` (then set `WEBHOOK_URL` to match)
-- No Docker? `cd webhook-receiver && PORT=9900 python3 app.py`
+Within seconds you have the entire Contract Guard system live:
 
-### 2. Install dependencies
+| Service | URL | What it is |
+|---|---|---|
+| **contract-guard** | <http://localhost:5051> | React + Tailwind dashboard at `/`, full JSON API under `/api/*` |
+| **webhook-receiver** | <http://localhost:9900> | Alert receiver UI (auto-refreshing); `GET /api/received` as JSON, `DELETE /api/received` to clear |
+
+On startup the `contract-guard` container automatically:
+
+1. opens `specs/` and `consumers/` **read-only** (mounted at `/kit` with Docker's `:ro` flag — the read-only law is enforced by the mount itself);
+2. applies SQLite migrations (DB kept in the `contract-guard-data` volume);
+3. replays the entire pipeline — discovery → validation → wire indexing → diff →
+   consumer impact → gate (5 published / 6 blocked / 1 rejected) → sunset engine;
+4. POSTs all §8 webhook alerts to the receiver, which displays them live.
+
+The acceptance settings are **baked into `docker-compose.yml`**, so the demo behaves
+identically on every machine with zero configuration: `CG_FRESH=1` (full replay
+every start, L-3), `CG_AS_OF_DATE=2026-11-18` (pinned "today", L-4),
+`GATE_MODE=consumer` (L-1), plus `WEBHOOK_URL` pointed at the receiver service and
+`PORT=5051`. Ports are overridable if taken:
 
 ```bash
-cd contract-guard
+CG_PORT=6051 WEBHOOK_PORT=9950 docker compose up --build
+```
+
+Useful follow-ups:
+
+```bash
+docker compose logs -f contract-guard   # watch the pipeline: 12 gate decisions + 16 alerts
+docker compose down                     # stop (audit history kept in the volume)
+docker compose down -v                  # stop AND wipe the DB → next up is a clean run
+```
+
+> Port 9900 is published for you to browse; inside the network the app talks to the
+> receiver at `webhook-receiver:9000`, so alerts never depend on host port mapping.
+
+### Alternative: manual local setup (Node.js ≥ 22 + Python 3)
+
+Prefer running processes on your machine? Node ≥ 22 (tested on 24) plus Python 3:
+
+```bash
+# 1. webhook receiver on :9900 (plain stdlib, no pip install needed)
+cd webhook-receiver && PORT=9900 python3 app.py        # in one terminal
+
+# 2. install dependencies
+cd ../contract-guard
 npm install                 # backend
 cd client && npm install    # dashboard
+cd ..
+
+# 3. build and start (API + dashboard on one port)
+npm run build
+cd client && npm run build && cd ..                   # dashboard → client/dist
+PORT=5051 WEBHOOK_URL=http://localhost:9900 \
+CG_AS_OF_DATE=2026-11-18 GATE_MODE=consumer CG_FRESH=1 \
+node dist/server.js
 ```
 
-### 3. Configuration (env / `.env`)
+Then <http://localhost:5051> (dashboard) and <http://localhost:9900> (receiver) work
+exactly as in the Docker flow. (The env vars below already have sane defaults; the
+ones listed here reproduce the compose/acceptance configuration.)
 
-All settings come from the environment. With Node ≥ 22 you can keep them in `contract-guard/.env` and pass the file in (the app deliberately has no dotenv dependency):
+### Configuration (env / `.env`) — reference
+
+All settings come from the environment. In the Docker flow they are already set in
+`docker-compose.yml`; you only need them for manual runs. With Node ≥ 22 you can
+keep them in `contract-guard/.env` and pass the file in (the app deliberately has
+no dotenv dependency):
 
 ```bash
-# contract-guard/.env
-PORT=5000
+# contract-guard/.env (manual runs; `node --env-file=.env dist/server.js`)
+PORT=5051                       # compose default 5051; app default when unset is 5000
 WEBHOOK_URL=http://localhost:9900
 CG_DB_PATH=data/contract-guard.db
 CG_AS_OF_DATE=2026-11-18      # pin "today" (acceptance runs pin this)
@@ -241,51 +292,72 @@ KIT_ROOT=..                   # folder containing specs/ and consumers/
 CG_LOG_LEVEL=info             # debug | info | warn | error
 ```
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `PORT` | `5000` | HTTP port for the API + dashboard |
-| `WEBHOOK_URL` | `http://localhost:9900` | alert receiver base URL |
-| `CG_DB_PATH` | `contract-guard/data/contract-guard.db` | SQLite file (`:memory:` supported for tests) |
-| `CG_AS_OF_DATE` | real date (IST calendar day) | pins sunset math; acceptance pins `2026-11-18` |
-| `GATE_MODE` | `consumer` | L-1 gate policy |
-| `CG_FRESH` | `1` | L-3 pipeline replay on startup |
-| `KIT_ROOT` | parent of `contract-guard/` | where `specs/` and `consumers/` live |
-| `CG_LOG_LEVEL` | `info` | logger verbosity |
+| Variable | Default (standalone) | In compose | Purpose |
+|---|---|---|---|
+| `PORT` | `5000` | `5051` | HTTP port for the API + dashboard |
+| `WEBHOOK_URL` | `http://localhost:9900` | `http://webhook-receiver:9000` | alert receiver base URL |
+| `CG_DB_PATH` | `contract-guard/data/contract-guard.db` | `/app/data/contract-guard.db` (named volume) | SQLite file (`:memory:` supported for tests) |
+| `CG_AS_OF_DATE` | real date (IST calendar day) | `2026-11-18` | pins sunset math; acceptance pins `2026-11-18` |
+| `GATE_MODE` | `consumer` | `consumer` | L-1 gate policy |
+| `CG_FRESH` | `1` | `1` | L-3 pipeline replay on startup |
+| `KIT_ROOT` | parent of `contract-guard/` | `/kit` (read-only mount) | where `specs/` and `consumers/` live |
+| `CG_LOG_LEVEL` | `info` | `info` | logger verbosity |
 
 Bad values abort startup with a precise list of problems (`ConfigError`) — the app never guesses.
 
-### 4. Database migrations
+### Database migrations — automatic
 
-**None to run manually.** `openDatabase()` applies pending migrations from `src/db/migrations.ts` at startup, inside a transaction, and records them in `schema_migrations`. Current status is exposed by `GET /api/health` (`db.pending` must be `[]`). Tables: `services`, `spec_versions`, `operations`, `wire_fields`, `consumers`, `consumer_uses`, `consumer_use_fields`, `findings`, `alerts`, `events`, plus the migration ledger.
+**None to run manually, in either mode.** `openDatabase()` applies pending migrations from `src/db/migrations.ts` at startup, inside a transaction, and records them in `schema_migrations`. Current status is exposed by `GET /api/health` (`db.pending` must be `[]`). Tables: `services`, `spec_versions`, `operations`, `wire_fields`, `consumers`, `consumer_uses`, `consumer_use_fields`, `findings`, `alerts`, `events`, plus the migration ledger.
 
 ---
 
 ## Running
 
+### With Docker (recommended)
+
+`docker compose up --build` — see [Setup and configuration](#setup-and-configuration).
+Watch the story unfold:
+
+```bash
+docker compose logs -f contract-guard
+# … startup pipeline complete published=5 blocked=6 rejected=1 sunsetOverdue=1 alertsSent=16 alertsFailed=0
+```
+
+Then open <http://localhost:5051> (dashboard: timelines, findings, impact, live
+alert feed) and <http://localhost:9900> (receiver: every §8 block/consumer/
+deprecation/invalid/rejected/sunset alert). Health check:
+`curl http://localhost:5051/api/health`.
+
+Replay the demo as often as you like — L-3 means **every start replays the whole
+pipeline and re-fires all alerts**, and prior runs stay in the volume's audit
+history (`events`, `alerts`). For a pristine run: `docker compose down -v`.
+
+### Manually (Node.js + Python)
+
 ```bash
 cd contract-guard
 
-# Production-style: build, then serve API + dashboard from one process
+# Production-style: build backend + dashboard, then serve both from one process
 npm run build
+(cd client && npm run build)
 node --env-file=.env dist/server.js        # or: npm start (with exported env)
+
+# Dev mode (hot reload)
+npm run dev                                # backend with tsx watch
+cd client && npm run dev                   # Vite on :5173 with HMR, /api proxied
 ```
 
-On startup you will see (L-3 replay): config banner → migrations → discovery → validation (`ERR_INVALID_SPEC` for the broken claims file) → wire indexing → per-file `gate decision` log lines → alert deliveries. Then:
+On startup you will see the same L-3 replay: config banner → migrations →
+discovery → validation (`ERR_INVALID_SPEC` for the broken claims file) → wire
+indexing → per-file `gate decision` log lines → alert deliveries.
 
-- Dashboard: <http://localhost:5000/>
-- Health: `curl localhost:5000/api/health`
-- Receiver: <http://localhost:9900> should be filling with block/consumer/deprecation/invalid/rejected/sunset alerts
+Replay locally by deleting the DB (`rm data/contract-guard.db`) or just restart —
+either way the full publish/block/alert story runs again.
 
-Dev mode:
-
-```bash
-npm run dev                 # backend with tsx watch (reloads on src changes)
-cd client && npm run dev    # Vite on :5173 with HMR, /api proxied to :5000
-```
-
-Replay the demo as often as you like: delete the DB (`rm data/contract-guard.db`), restart, and the full publish/block/alert story runs again. Keep the DB and prior runs remain in `events`/`alerts` audit history.
-
-> **macOS note:** Control Center (AirPlay Receiver) listens on port 5000 by default and will hold it (`EADDRINUSE`). Either disable AirPlay's Receiver in System Settings or run on another port (`PORT=5051 node --env-file=.env dist/server.js`; keep `client/vite.config.ts`'s proxy target in sync with `CG_API_TARGET`).
+> **macOS note (manual mode):** Control Center (AirPlay Receiver) listens on port
+> 5000 and will hold it (`EADDRINUSE`). The Docker default (5051) sidesteps this;
+> for manual runs set `PORT=5051` (and keep `client/vite.config.ts`'s proxy in
+> sync via `CG_API_TARGET`), or disable AirPlay's Receiver in System Settings.
 
 ---
 
@@ -339,7 +411,7 @@ Build and serve (the Express server serves `client/dist` at `/`):
 
 ```bash
 cd contract-guard/client && npm run build    # tsc --noEmit && vite build
-# GET http://localhost:5000/ now serves the dashboard
+# GET http://localhost:5051/ (compose default) now serves the dashboard
 ```
 
 Before a client build, `GET /` returns a clear "assets not built" notice instead of a 404.
