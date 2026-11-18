@@ -69,10 +69,14 @@ export interface GateVerdict {
   reasonCodes: FindingCode[];
   /** Findings the gate itself produced (duplicate note, unconsumed warnings). */
   gateFindings: Finding[];
+  /** Raw diff findings for this candidate (empty when not diffed). */
+  diffFindings: Finding[];
   /** Consumer impacts of the diff (empty unless blocked by impact). */
   impacts: ConsumerImpact[];
   /** Which baseline rule applied. */
   baseline: "first" | "previous";
+  /** Version diffed against, or `null` for a first publication. */
+  baselineVersion: string | null;
   /** Registry row id of the decided version. */
   specVersionId: number;
 }
@@ -340,8 +344,10 @@ export function runPublicationGate(
       outcome: verdictPart.outcome,
       reasonCodes: verdictPart.reasonCodes,
       gateFindings: verdictPart.gateFindings,
+      diffFindings,
       impacts,
       baseline: baselineEntry === undefined ? "first" : "previous",
+      baselineVersion: baselineEntry?.version.version ?? null,
       specVersionId: ids.specVersionId,
     };
   });
